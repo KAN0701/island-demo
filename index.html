@@ -1,10 +1,9 @@
-　<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ja">
 <head>
-<base href="/island-demo/">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>小さな島デモ（ローカルOK版）</title>
+<title>小さな島デモ（GitHub Pages対応・フォールバック付き）</title>
 <style>
   html, body { height: 100%; margin: 0; background: #0b1220; color: #e9ecff; font-family: system-ui, -apple-system, Segoe UI, Arial, "Noto Sans JP", sans-serif; }
   #ui { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
@@ -37,9 +36,29 @@
 <div id="jumpBtn"></div>
 <div id="error"><div class="box">WebGLを初期化できませんでした。別のブラウザ（Chrome/Edge）で開くか、再読み込みしてください。</div></div>
 
-<!-- Non-module scripts so file:// でも動く -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+<!-- Robust CDN with automatic fallback -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"
+        onerror="this.onerror=null;this.src='https://unpkg.com/three@0.160.0/build/three.min.js'"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"
+        onerror="this.onerror=null;this.src='https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js'"></script>
+
+<!-- On-screen debug overlay (helps on mobile) -->
+<script>
+(function(){
+  function showErr(msg){
+    const d=document.createElement('div');
+    d.style.cssText='position:fixed;left:0;top:0;right:0;background:#200;color:#fff;padding:8px;z-index:9999;font:12px -apple-system,system-ui';
+    d.textContent=msg; document.body.appendChild(d);
+  }
+  window.addEventListener('error',e=>showErr('Error: '+e.message));
+  window.addEventListener('unhandledrejection',e=>showErr('Promise: '+(e.reason?.message||e.reason)));
+  setTimeout(()=>{
+    if(!window.THREE) return showErr('THREE failed to load');
+    if(!THREE.OrbitControls && !window.OrbitControls) showErr('OrbitControls failed to load');
+  }, 1200);
+})();
+</script>
+
 <script>
 (function () {
   if (!window.THREE || !document.createElement('canvas').getContext) {
