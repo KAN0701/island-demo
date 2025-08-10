@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>小さな島デモ（GitHub Pages対応・r146版）</title>
+<title>小さな島デモ FPV版（r146）</title>
 <style>
   html, body { height: 100%; margin: 0; background: #0b1220; color: #e9ecff; font-family: system-ui, -apple-system, Segoe UI, Arial, "Noto Sans JP", sans-serif; }
   #ui { position: fixed; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
@@ -24,25 +24,24 @@
 <body>
 <div id="ui">
   <div class="hud">
-    <div class="chip">🌞 <span id="timeOfDay">昼</span></div>
-    <div class="chip">💰 <span id="coins">0</span> / <span id="totalCoins">0</span></div>
-    <div class="chip hint">操作：ドラッグで視点、WASDで移動（モバイルは左下スティック）</div>
+    <div class="chip">視点: <span id="viewModeLabel">三人称</span></div>
+    <div class="chip hint">V:一/三人称切替（PC）／WASD移動（モバイル:左下スティック）</div>
   </div>
   <div class="hud" style="justify-content:center;">
-    <div id="credits">小さな島デモ：歩き回ってコインを集めよう</div>
+    <div id="credits">小さな島デモFPV：歩き回ってコインを集めよう</div>
   </div>
 </div>
 <div id="stickArea"><div id="stickBase"></div><div id="stick"></div></div>
 <div id="jumpBtn"></div>
 <div id="error"><div class="box">WebGLを初期化できませんでした。別のブラウザ（Chrome/Edge）で開くか、再読み込みしてください。</div></div>
 
-<!-- Three r146 + OrbitControls (examples/js) / with fallback -->
+<!-- Three r146 + OrbitControls（非モジュール）/ フォールバック付き -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"
         onerror="this.onerror=null;this.src='https://unpkg.com/three@0.146.0/build/three.min.js'"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/controls/OrbitControls.min.js"
         onerror="this.onerror=null;this.src='https://unpkg.com/three@0.146.0/examples/js/controls/OrbitControls.min.js'"></script>
 
-<!-- On-screen debug overlay -->
+<!-- 画面上エラーバー（スマホでも原因特定しやすく） -->
 <script>
 (function(){
   function showErr(msg){
@@ -55,7 +54,7 @@
   setTimeout(()=>{
     if(!window.THREE) return showErr('THREE failed to load');
     if(!THREE.OrbitControls && !window.OrbitControls) showErr('OrbitControls failed to load');
-  }, 1200);
+  }, 1000);
 })();
 </script>
 
@@ -66,6 +65,7 @@
     return;
   }
 
+  // === Scene / Renderer / Camera / Controls ===
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x6ea8ff);
 
@@ -82,11 +82,51 @@
   controls.target.set(0, 10, 0);
   controls.maxPolarAngle = Math.PI * 0.49;
 
+  // === First-person toggle ===
+  let viewMode = 'third';                   // 'third' or 'first'
+  const HEAD_HEIGHT = 1.6;
+  let fpYaw = 0, fpPitch = 0;
+  const FP_SENS = 0.0025;
+  let pointerLocked = false;
+  const viewLabel = document.getElementById('viewModeLabel');
+
+  window.addEventListener('keydown', (e)=>{
+    if (e.key.toLowerCase() === 'v') {
+      if (viewMode === 'third') {
+        viewMode = 'first';
+        viewLabel.textContent = '一人称';
+        controls.enabled = false;
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        fpYaw = Math.atan2(dir.x, dir.z);
+        fpPitch = Math.asin(THREE.MathUtils.clamp(dir.y, -0.999, 0.999));
+        renderer.domElement.requestPointerLock?.();
+      } else {
+        viewMode = 'third';
+        viewLabel.textContent = '三人称';
+        document.exitPointerLock?.();
+        controls.enabled = true;
+      }
+    }
+  });
+  document.addEventListener('pointerlockchange', ()=>{
+    pointerLocked = (document.pointerLockElement === renderer.domElement);
+  });
+  document.addEventListener('mousemove', (e)=>{
+    if (viewMode === 'first' && pointerLocked) {
+      fpYaw   -= e.movementX * FP_SENS;
+      fpPitch -= e.movementY * FP_SENS;
+      fpPitch = THREE.MathUtils.clamp(fpPitch, -Math.PI/2+0.1, Math.PI/2-0.1);
+    }
+  });
+
+  // === Lights ===
   const sun = new THREE.DirectionalLight(0xffffff, 1.0);
   sun.position.set(80, 120, 40);
   scene.add(sun);
   scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
+  // === Terrain ===
   const ISLAND_SIZE = 400;
   const HALF = ISLAND_SIZE / 2;
 
@@ -129,6 +169,7 @@
   terrain.receiveShadow = true;
   scene.add(terrain);
 
+  // Water
   const waterGeo = new THREE.CircleGeometry(HALF*1.15, 64);
   const waterMat = new THREE.MeshPhysicalMaterial({ color: 0x3aa9ff, roughness: 0.2, metalness: 0.0, transparent: true, opacity: 0.6 });
   const water = new THREE.Mesh(waterGeo, waterMat);
@@ -136,11 +177,11 @@
   water.position.y = 0.0;
   scene.add(water);
 
+  // Trees
   const trees = new THREE.Group();
   scene.add(trees);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.9 });
   const leafMat  = new THREE.MeshStandardMaterial({ color: 0x1f8a3b, roughness: 0.7 });
-
   function placeTrees(n) {
     n = n || 80;
     for (let i=0; i<n; i++) {
@@ -162,6 +203,7 @@
   }
   placeTrees();
 
+  // Coins
   const coinMat = new THREE.MeshStandardMaterial({ color: 0xffd35a, metalness: 0.6, roughness: 0.2, emissive: 0x332200, emissiveIntensity: 0.25 });
   const coins = [];
   function placeCoins(n) {
@@ -184,21 +226,87 @@
     }
   }
   placeCoins(18);
-  document.getElementById('totalCoins').textContent = coins.length;
+  document.getElementById('credits').textContent += '（コイン: '+coins.length+'）';
 
-  const player = new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 12), new THREE.MeshStandardMaterial({ color: 0xdddddd }));
-  player.castShadow = true;
+  // === Player: low-poly human (white shirt + brown shorts) ===
+  const player = new THREE.Group();
+  const matSkin  = new THREE.MeshStandardMaterial({ color: 0xffd6b0, roughness: 0.7 });
+  const matShirt = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+  const matPants = new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.9 });
+  const matShoes = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+  // body
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.0, 0.8), matShirt);
+  torso.position.y = 2.0; player.add(torso);
+  // head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), matSkin);
+  head.position.y = 3.4; player.add(head);
+  // arms
+  const armGeo = new THREE.BoxGeometry(0.4, 1.6, 0.6);
+  const armL = new THREE.Mesh(armGeo, matShirt); armL.position.set(-1.0, 2.0, 0);
+  const armR = new THREE.Mesh(armGeo, matShirt); armR.position.set( 1.0, 2.0, 0);
+  player.add(armL, armR);
+  // legs
+  const legGeo = new THREE.BoxGeometry(0.6, 1.2, 0.7);
+  const legL = new THREE.Mesh(legGeo, matPants); legL.position.set(-0.4, 0.7, 0);
+  const legR = new THREE.Mesh(legGeo, matPants); legR.position.set( 0.4, 0.7, 0);
+  player.add(legL, legR);
+  // shoes
+  const shoeGeo = new THREE.BoxGeometry(0.7, 0.25, 1.0);
+  const shoeL = new THREE.Mesh(shoeGeo, matShoes); shoeL.position.set(-0.4, 0.1, 0.2);
+  const shoeR = new THREE.Mesh(shoeGeo, matShoes); shoeR.position.set( 0.4, 0.1, 0.2);
+  player.add(shoeL, shoeR);
+
+  player.position.set(0, islandHeight(0,0)+0.05, 0);
   scene.add(player);
-  player.position.set(0, islandHeight(0,0)+1.6, 0);
 
+  // camera & controls target
   controls.target.copy(player.position);
   camera.position.set(player.position.x+10, player.position.y+12, player.position.z+18);
 
+  // Movement
   const keys = { w:0,a:0,s:0,d:0 };
   let vel = new THREE.Vector3();
   let onGround = false;
-
   function getGroundY(x,z){ return islandHeight(x,z); }
+
+  // mobile joystick
+  const stickArea = document.getElementById('stickArea');
+  const stick = document.getElementById('stick');
+  let joyActive = false, joyDir = {x:0, y:0};
+  function setStick(x, y) { stick.style.left = x+'px'; stick.style.top = y+'px'; }
+  function clampVec(v, max){ const l = Math.hypot(v.x, v.y); if (l>max){ v.x*=max/l; v.y*=max/l;} }
+  stickArea.addEventListener('pointerdown', (e)=> {
+    joyActive = true; stickArea.setPointerCapture(e.pointerId);
+    const rect = stickArea.getBoundingClientRect(); const cx = e.clientX-rect.left, cy = e.clientY-rect.top;
+    setStick(cx, cy);
+    const v = {x: cx-80, y: cy-80}; clampVec(v, 50); joyDir.x = v.x/50; joyDir.y = v.y/50;
+  });
+  stickArea.addEventListener('pointermove', (e)=> {
+    if (!joyActive) return;
+    const rect = stickArea.getBoundingClientRect(); const cx = e.clientX-rect.left, cy = e.clientY-rect.top;
+    const v = {x: cx-80, y: cy-80}; clampVec(v, 50); setStick(80+v.x, 80+v.y);
+    joyDir.x = v.x/50; joyDir.y = v.y/50;
+  });
+  stickArea.addEventListener('pointerup', ()=> { joyActive=false; setStick(80,80); joyDir.x=0; joyDir.y=0; });
+
+  const jumpBtn = document.getElementById('jumpBtn');
+  let jumpQueued = false;
+  jumpBtn.addEventListener('pointerdown', ()=> { jumpQueued = true; setTimeout(()=>jumpQueued=false, 180); });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.key==='w' || e.key==='ArrowUp') keys.w=1;
+    if (e.key==='a' || e.key==='ArrowLeft') keys.a=1;
+    if (e.key==='s' || e.key==='ArrowDown') keys.s=1;
+    if (e.key==='d' || e.key==='ArrowRight') keys.d=1;
+    if (e.key===' ' && onGround) vel.y = 9;
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.key==='w' || e.key==='ArrowUp') keys.w=0;
+    if (e.key==='a' || e.key==='ArrowLeft') keys.a=0;
+    if (e.key==='s' || e.key==='ArrowDown') keys.s=0;
+    if (e.key==='d' || e.key==='ArrowRight') keys.d=0;
+  });
 
   function updatePlayer(dt) {
     const forward = new THREE.Vector3();
@@ -239,12 +347,57 @@
       player.position.x *= s;
       player.position.z *= s;
     }
-
-    controls.target.lerp(player.position, 1 - Math.exp(-8*dt));
   }
 
-  let collected = 0;
-  const coinsEl = document.getElementById('coins');
+  // 歩行アニメ＆向き
+  let walkPhase = 0;
+  let lastPlayer = player.position.clone();
+  function updateHumanAnim(dt){
+    const speed = new THREE.Vector3().subVectors(player.position, lastPlayer).length() / Math.max(dt,1e-6);
+    const s = Math.min(1, speed/6);
+    walkPhase += dt * 8 * s;
+    const a = Math.sin(walkPhase)*0.6*s;
+    const b = Math.cos(walkPhase)*0.6*s;
+    const armL = player.children[2], armR = player.children[3], legL = player.children[4], legR = player.children[5];
+    armL.rotation.x =  a;  armR.rotation.x = -a;
+    legL.rotation.x = -b;  legR.rotation.x =  b;
+    const dir = new THREE.Vector3().subVectors(player.position, lastPlayer); dir.y = 0;
+    if (dir.lengthSq() > 1e-5) player.rotation.y = Math.atan2(dir.x, dir.z);
+    lastPlayer.copy(player.position);
+  }
+
+  // 昼夜っぽい
+  function updateLighting(t) {
+    const tod = (Math.sin(t*0.02)*0.5 + 0.5);
+    const skyDay = new THREE.Color(0x6ea8ff);
+    const skyNight = new THREE.Color(0x0a1030);
+    scene.background = skyNight.clone().lerp(skyDay, tod);
+    sun.intensity = 0.2 + tod*0.9;
+  }
+
+  // コイン
+  function placeCoins(n) {
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffd35a, metalness: 0.6, roughness: 0.2 });
+    for (let i=0;i<n;i++) {
+      let x=0,z=0,y=0;
+      for (let t=0;t<50;t++) {
+        const ang = Math.random()*Math.PI*2;
+        const rad = THREE.MathUtils.randFloat(HALF*0.15, HALF*0.75);
+        x = Math.cos(ang)*rad;
+        z = Math.sin(ang)*rad;
+        y = islandHeight(x,z);
+        if (y>3) break;
+      }
+      const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.6,0.6,0.12,24), mat);
+      coin.rotation.x = Math.PI/2;
+      coin.position.set(x, y+0.9, z);
+      scene.add(coin);
+      coins.push(coin);
+    }
+  }
+  const coins = [];
+  placeCoins(18);
+
   function checkCoins(dt, t) {
     for (let i=coins.length-1;i>=0;i--) {
       const c = coins[i];
@@ -253,8 +406,6 @@
       const d = c.position.distanceTo(player.position);
       if (d < 1.3) {
         c.userData.collected = true;
-        collected++;
-        coinsEl.textContent = collected;
         const start = performance.now();
         const anim = () => {
           const k = Math.min(1, (performance.now()-start)/250);
@@ -267,59 +418,23 @@
     }
   }
 
-  function updateLighting(t) {
-    const tod = (Math.sin(t*0.02)*0.5 + 0.5);
-    const skyDay = new THREE.Color(0x6ea8ff);
-    const skyNight = new THREE.Color(0x0a1030);
-    scene.background = skyNight.clone().lerp(skyDay, tod);
-    sun.intensity = 0.2 + tod*0.9;
-    document.getElementById('timeOfDay').textContent = tod>0.5 ? '昼' : '夜';
+  // 一人称用カメラ
+  function updateCameraFirstPerson(){
+    camera.position.copy(player.position);
+    camera.position.y += HEAD_HEIGHT;
+    const qYaw   = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), fpYaw);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), fpPitch);
+    camera.quaternion.copy(qYaw).multiply(qPitch);
   }
 
-  window.addEventListener('keydown', (e) => {
-    if (e.repeat) return;
-    if (e.key==='w' || e.key==='ArrowUp') keys.w=1;
-    if (e.key==='a' || e.key==='ArrowLeft') keys.a=1;
-    if (e.key==='s' || e.key==='ArrowDown') keys.s=1;
-    if (e.key==='d' || e.key==='ArrowRight') keys.d=1;
-    if (e.key===' ' && onGround) vel.y = 9;
-  });
-  window.addEventListener('keyup', (e) => {
-    if (e.key==='w' || e.key==='ArrowUp') keys.w=0;
-    if (e.key==='a' || e.key==='ArrowLeft') keys.a=0;
-    if (e.key==='s' || e.key==='ArrowDown') keys.s=0;
-    if (e.key==='d' || e.key==='ArrowRight') keys.d=0;
-  });
-
-  const stickArea = document.getElementById('stickArea');
-  const stick = document.getElementById('stick');
-  let joyActive = false, joyDir = {x:0, y:0};
-  function setStick(x, y) { stick.style.left = x+'px'; stick.style.top = y+'px'; }
-  function clampVec(v, max){ const l = Math.hypot(v.x, v.y); if (l>max){ v.x*=max/l; v.y*=max/l;} }
-  stickArea.addEventListener('pointerdown', (e)=> {
-    joyActive = true; stickArea.setPointerCapture(e.pointerId);
-    const rect = stickArea.getBoundingClientRect(); const cx = e.clientX-rect.left, cy = e.clientY-rect.top;
-    setStick(cx, cy);
-    const v = {x: cx-80, y: cy-80}; clampVec(v, 50); joyDir.x = v.x/50; joyDir.y = v.y/50;
-  });
-  stickArea.addEventListener('pointermove', (e)=> {
-    if (!joyActive) return;
-    const rect = stickArea.getBoundingClientRect(); const cx = e.clientX-rect.left, cy = e.clientY-rect.top;
-    const v = {x: cx-80, y: cy-80}; clampVec(v, 50); setStick(80+v.x, 80+v.y);
-    joyDir.x = v.x/50; joyDir.y = v.y/50;
-  });
-  stickArea.addEventListener('pointerup', ()=> { joyActive=false; setStick(80,80); joyDir.x=0; joyDir.y=0; });
-
-  const jumpBtn = document.getElementById('jumpBtn');
-  let jumpQueued = false;
-  jumpBtn.addEventListener('pointerdown', ()=> { jumpQueued = true; setTimeout(()=>jumpQueued=false, 180); });
-
+  // Resize
   window.addEventListener('resize', ()=>{
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
+  // Main loop
   let last = performance.now();
   function animate() {
     const now = performance.now();
@@ -327,9 +442,17 @@
     last = now;
 
     updatePlayer(dt);
+    updateHumanAnim(dt);
     checkCoins(dt, now*0.001);
     updateLighting(now*0.001);
-    controls.update();
+
+    if (viewMode === 'first') {
+      updateCameraFirstPerson();
+    } else {
+      controls.target.lerp(player.position, 1 - Math.exp(-8*dt));
+      controls.update();
+    }
+
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
   }
